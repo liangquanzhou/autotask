@@ -32,9 +32,13 @@ brew upgrade liangquanzhou/tap/autotask
 
 ```sh
 autotask scan --personal
+autotask scan --personal --verbose
 autotask doctor --personal
 autotask list
+autotask list --group
+autotask list --verbose
 autotask status
+autotask show <name>
 autotask diff
 autotask sync --apply
 autotask import --apply --refresh
@@ -50,6 +54,12 @@ autotask ui-state --json
 
 `autotask list` 不是“列出系统全部后台任务”，而是列出 `~/.config/autotask/tasks.yaml` 中登记的任务。它更像一个个人资产台账。
 
+默认的 `autotask list` 只显示概览字段：任务名、调度时间、类型和 label。长命令不会出现在默认列表里，避免把表格撑乱。
+
+- `autotask list --group`：按 Daemon / Daily / Weekly / Monthly / Interval 分组查看。
+- `autotask list --verbose`：用卡片形式展示所有登记任务的完整信息。
+- `autotask show <name>`：只查看一个任务的完整信息，包括 command、plist、日志路径、备注等。
+
 `autotask scan` 才是扫描当前机器上真实存在的任务来源：
 
 - 当前用户的 `crontab`
@@ -59,6 +69,8 @@ autotask ui-state --json
 - `brew services list`
 
 `autotask scan --personal` 会尽量过滤出像是你自己配置的任务，例如 label 符合个人前缀，或者命令路径指向你的项目、配置目录。这个过滤是启发式的，所以它适合快速排查，不适合当作最终配置来源。
+
+默认的 `autotask scan` 会按来源分组，只显示状态、调度时间和 label。需要查看命令和 plist 路径时使用 `autotask scan --verbose`。
 
 `autotask doctor --personal` 会在扫描结果基础上检查问题，比如：
 

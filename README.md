@@ -28,10 +28,11 @@ The long-term model is:
 ## Commands
 
 ```sh
-autotask scan [--json] [--personal]
-autotask doctor [--json] [--personal]
-autotask list [--json]
+autotask scan [--json] [--personal] [--verbose]
+autotask doctor [--json] [--personal] [--verbose]
+autotask list [--json] [--group] [--verbose]
 autotask status [name] [--json]
+autotask show <name> [--json]
 autotask ui-state --json
 autotask diff [--json]
 autotask sync [--apply] [--json]
@@ -53,6 +54,8 @@ autotask version
 - `/Library/LaunchAgents`
 - `/Library/LaunchDaemons`
 - `brew services list`
+
+Default human-readable output is intentionally compact. Use `list --group` to group registered tasks by schedule, `list --verbose` for full task cards, and `show <name>` for one task's details. Use `scan --verbose` when you need command and plist paths for discovered tasks.
 
 `doctor` checks:
 

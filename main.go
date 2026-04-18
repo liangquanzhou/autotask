@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const appVersion = "0.1.3"
+const appVersion = "0.1.4"
 
 type Config struct {
 	Tasks []Task `yaml:"tasks" json:"tasks"`
@@ -125,13 +125,15 @@ func main() {
 	var err error
 	switch cmd {
 	case "scan":
-		err = runScan(jsonOut, personalOnly)
+		err = runScan(os.Args[2:], jsonOut, personalOnly)
 	case "doctor":
-		err = runDoctor(jsonOut, personalOnly)
+		err = runDoctor(os.Args[2:], jsonOut, personalOnly)
 	case "list":
-		err = runList(jsonOut)
+		err = runList(os.Args[2:], jsonOut)
 	case "status":
 		err = runStatus(os.Args[2:], jsonOut)
+	case "show":
+		err = runShow(os.Args[2:], jsonOut)
 	case "ui-state":
 		err = runUIState(jsonOut)
 	case "diff":
@@ -171,13 +173,16 @@ func usage() {
 	fmt.Println(`autotask manages a personal registry of macOS automation tasks.
 
 Usage:
-  autotask scan [--json] [--personal]
+  autotask scan [--json] [--personal] [--verbose]
                             scan crontab, launchd, and brew services
-  autotask doctor [--json] [--personal]
+  autotask doctor [--json] [--personal] [--verbose]
                             report duplicates, invalid plists, and config drift
-  autotask list [--json]     list tasks from ~/.config/autotask/tasks.yaml
+  autotask list [--json] [--group] [--verbose]
+                            list tasks from ~/.config/autotask/tasks.yaml
   autotask status [name] [--json]
                             show registered task status
+  autotask show <name> [--json]
+                            show one registered task in detail
   autotask ui-state [--json] aggregate status, diff, and doctor for a UI
   autotask diff [--json]     compare tasks.yaml with user LaunchAgents
   autotask sync [--apply] [--json]
@@ -195,7 +200,8 @@ Usage:
   autotask init              create ~/.config/autotask with a starter tasks.yaml`)
 }
 
-func runScan(jsonOut, personalOnly bool) error {
+func runScan(args []string, jsonOut, personalOnly bool) error {
+	verbose := hasFlag(args, "--verbose") || hasFlag(args, "-v")
 	result := scanAll()
 	sortTasks(result.Items)
 	if personalOnly {
@@ -204,7 +210,7 @@ func runScan(jsonOut, personalOnly bool) error {
 	if jsonOut {
 		return writeJSON(result)
 	}
-	printTasks(result.Items)
+	printDiscoveredTasks(result.Items, verbose)
 	if len(result.Issues) > 0 {
 		fmt.Println()
 		printIssues(result.Issues)
@@ -212,7 +218,8 @@ func runScan(jsonOut, personalOnly bool) error {
 	return nil
 }
 
-func runDoctor(jsonOut, personalOnly bool) error {
+func runDoctor(args []string, jsonOut, personalOnly bool) error {
+	verbose := hasFlag(args, "--verbose") || hasFlag(args, "-v")
 	result := scanAll()
 	cfg, cfgPath, err := loadConfig()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -230,7 +237,7 @@ func runDoctor(jsonOut, personalOnly bool) error {
 	if jsonOut {
 		return writeJSON(result)
 	}
-	printTasks(result.Items)
+	printDiscoveredTasks(result.Items, verbose)
 	fmt.Println()
 	if len(result.Issues) == 0 {
 		fmt.Println("No doctor issues found.")
@@ -240,7 +247,7 @@ func runDoctor(jsonOut, personalOnly bool) error {
 	return nil
 }
 
-func runList(jsonOut bool) error {
+func runList(args []string, jsonOut bool) error {
 	cfg, cfgPath, err := loadConfig()
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("config not found: %s; run `autotask init` first", cfgPath)
@@ -255,7 +262,14 @@ func runList(jsonOut bool) error {
 		fmt.Println("No tasks registered.")
 		return nil
 	}
-	printRegisteredTasks(cfg.Tasks)
+	switch {
+	case hasFlag(args, "--verbose") || hasFlag(args, "-v"):
+		printTaskCards(cfg.Tasks)
+	case hasFlag(args, "--group"):
+		printGroupedTasks(cfg.Tasks)
+	default:
+		printRegisteredTasks(cfg.Tasks)
+	}
 	return nil
 }
 
@@ -275,24 +289,50 @@ func runStatus(args []string, jsonOut bool) error {
 	return nil
 }
 
+func runShow(args []string, jsonOut bool) error {
+	name := firstArg(args)
+	if name == "" {
+		return errors.New("usage: autotask show <name>")
+	}
+	task, err := taskByNameOrLabel(name)
+	if err != nil {
+		return err
+	}
+	rows, err := statusRows(name)
+	if err != nil {
+		return err
+	}
+	out := map[string]any{"task": task}
+	if len(rows) > 0 {
+		out["status"] = rows[0]
+	}
+	if jsonOut {
+		return writeJSON(out)
+	}
+	var row *StatusRow
+	if len(rows) > 0 {
+		row = &rows[0]
+	}
+	printTaskDetail(task, row)
+	return nil
+}
+
 func printRegisteredTasks(tasks []Task) {
-	fmt.Printf("Registered tasks (%d)\n\n", len(tasks))
+	fmt.Printf("Registered tasks: %d\n\n", len(tasks))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSCHEDULE\tLABEL")
+	fmt.Fprintln(w, "NAME\tWHEN\tKIND\tLABEL")
 	for _, task := range tasks {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", task.Name, emptyDash(formatConfigSchedule(task.Schedule)), task.Label)
-		fmt.Fprintf(w, "  cmd: %s\n\n", compactPath(strings.Join(task.Command, " ")))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", task.Name, humanSchedule(task.Schedule), emptyDash(task.Kind), task.Label)
 	}
 	_ = w.Flush()
 }
 
 func printStatusRows(rows []StatusRow) {
-	fmt.Printf("Registered task status (%d)\n\n", len(rows))
+	fmt.Printf("Registered task status: %d\n\n", len(rows))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tENABLED\tSCHEDULE\tLABEL")
+	fmt.Fprintln(w, "NAME\tSTATUS\tENABLED\tWHEN\tLABEL")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.Name, emptyDash(row.Status), yesNo(row.Enabled), emptyDash(row.Schedule), row.Label)
-		fmt.Fprintf(w, "  cmd: %s\n\n", compactPath(row.Command))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.Name, emptyDash(row.Status), yesNo(row.Enabled), humanDisplaySchedule(row.Schedule), row.Label)
 	}
 	_ = w.Flush()
 }
@@ -1674,32 +1714,152 @@ func configPath() string {
 	return filepath.Join(configDir(), "tasks.yaml")
 }
 
-func printTasks(items []DiscoveredTask) {
+func printTaskCards(tasks []Task) {
+	fmt.Printf("Registered tasks: %d\n\n", len(tasks))
+	for i, task := range tasks {
+		printTaskDetail(task, nil)
+		if i < len(tasks)-1 {
+			fmt.Println()
+		}
+	}
+}
+
+func printGroupedTasks(tasks []Task) {
+	fmt.Printf("Registered tasks: %d\n\n", len(tasks))
+	groups := map[string][]Task{}
+	for _, task := range tasks {
+		groups[scheduleGroup(task.Schedule)] = append(groups[scheduleGroup(task.Schedule)], task)
+	}
+	order := []string{"Daemon", "Daily", "Weekly", "Monthly", "Interval", "Other"}
+	for _, group := range order {
+		groupTasks := groups[group]
+		if len(groupTasks) == 0 {
+			continue
+		}
+		sort.Slice(groupTasks, func(i, j int) bool {
+			a, b := groupSortKey(groupTasks[i].Schedule), groupSortKey(groupTasks[j].Schedule)
+			if a != b {
+				return a < b
+			}
+			return groupTasks[i].Name < groupTasks[j].Name
+		})
+		fmt.Println(group)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, task := range groupTasks {
+			when := groupScheduleLabel(group, task.Schedule)
+			if when == "" {
+				fmt.Fprintf(w, "  %s\t%s\n", task.Name, task.Label)
+			} else {
+				fmt.Fprintf(w, "  %s\t%s\t%s\n", when, task.Name, task.Label)
+			}
+		}
+		_ = w.Flush()
+		fmt.Println()
+	}
+}
+
+func printTaskDetail(task Task, row *StatusRow) {
+	fmt.Println(task.Name)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "  label\t%s\n", task.Label)
+	fmt.Fprintf(w, "  kind\t%s\n", emptyDash(task.Kind))
+	fmt.Fprintf(w, "  schedule\t%s\n", humanSchedule(task.Schedule))
+	if row != nil {
+		fmt.Fprintf(w, "  status\t%s\n", emptyDash(row.Status))
+		fmt.Fprintf(w, "  enabled\t%s\n", yesNo(row.Enabled))
+		if row.Path != "" {
+			fmt.Fprintf(w, "  plist\t%s\n", compactPath(row.Path))
+		}
+	} else {
+		fmt.Fprintf(w, "  enabled\t%s\n", yesNo(taskEnabled(task)))
+		if path := launchAgentPath(task.Label); path != "" {
+			fmt.Fprintf(w, "  plist\t%s\n", compactPath(path))
+		}
+	}
+	if task.WorkingDirectory != "" {
+		fmt.Fprintf(w, "  cwd\t%s\n", compactPath(task.WorkingDirectory))
+	}
+	if task.Log != "" {
+		fmt.Fprintf(w, "  log\t%s\n", compactPath(task.Log))
+	}
+	if task.Stdout != "" {
+		fmt.Fprintf(w, "  stdout\t%s\n", compactPath(task.Stdout))
+	}
+	if task.Stderr != "" {
+		fmt.Fprintf(w, "  stderr\t%s\n", compactPath(task.Stderr))
+	}
+	if len(task.Tags) > 0 {
+		fmt.Fprintf(w, "  tags\t%s\n", strings.Join(task.Tags, ", "))
+	}
+	if task.Notes != "" {
+		fmt.Fprintf(w, "  notes\t%s\n", task.Notes)
+	}
+	if len(task.Env) > 0 {
+		keys := make([]string, 0, len(task.Env))
+		for key := range task.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(w, "  env.%s\t%s\n", key, compactPath(task.Env[key]))
+		}
+	}
+	fmt.Fprintf(w, "  command\t%s\n", compactPath(strings.Join(task.Command, " ")))
+	_ = w.Flush()
+}
+
+func printDiscoveredTasks(items []DiscoveredTask, verbose bool) {
 	if len(items) == 0 {
 		fmt.Println("No tasks found.")
 		return
 	}
-	fmt.Printf("Discovered tasks (%d)\n\n", len(items))
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SOURCE\tSTATUS\tSCHEDULE\tLABEL")
+	fmt.Printf("Discovered tasks: %d\n\n", len(items))
+	bySource := map[string][]DiscoveredTask{}
 	for _, item := range items {
-		status := item.Status
-		if status == "" {
-			status = "-"
+		bySource[item.Source] = append(bySource[item.Source], item)
+	}
+	order := discoveredSourceOrder(bySource)
+	for sourceIdx, source := range order {
+		sourceItems := bySource[source]
+		fmt.Printf("%s: %d\n", sourceTitle(source), len(sourceItems))
+		if verbose {
+			printDiscoveredCards(sourceItems)
+		} else {
+			printDiscoveredSummary(sourceItems)
 		}
-		if !item.Valid {
-			status = "invalid"
+		if sourceIdx < len(order)-1 {
+			fmt.Println()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", item.Source, status, emptyDash(item.Schedule), item.Label)
-		if item.Command != "" {
-			fmt.Fprintf(w, "  cmd: %s\n", compactPath(item.Command))
-		}
-		if item.Path != "" {
-			fmt.Fprintf(w, "  path: %s\n", compactPath(item.Path))
-		}
-		fmt.Fprintln(w)
+	}
+}
+
+func printDiscoveredSummary(items []DiscoveredTask) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "  STATUS\tWHEN\tLABEL")
+	for _, item := range items {
+		fmt.Fprintf(w, "  %s\t%s\t%s\n", discoveredStatus(item), humanDisplaySchedule(item.Schedule), item.Label)
 	}
 	_ = w.Flush()
+}
+
+func printDiscoveredCards(items []DiscoveredTask) {
+	for _, item := range items {
+		fmt.Printf("  %s\n", item.Label)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "    status\t%s\n", discoveredStatus(item))
+		fmt.Fprintf(w, "    when\t%s\n", humanDisplaySchedule(item.Schedule))
+		if item.Command != "" {
+			fmt.Fprintf(w, "    command\t%s\n", compactPath(item.Command))
+		}
+		if item.Path != "" {
+			fmt.Fprintf(w, "    path\t%s\n", compactPath(item.Path))
+		}
+		if item.Error != "" {
+			fmt.Fprintf(w, "    error\t%s\n", item.Error)
+		}
+		_ = w.Flush()
+		fmt.Println()
+	}
 }
 
 func printIssues(issues []DoctorIssue) {
@@ -1825,6 +1985,206 @@ func formatConfigSchedule(s Schedule) string {
 		return strings.Join(parts, " ")
 	default:
 		return s.Type
+	}
+}
+
+func humanDisplaySchedule(schedule string) string {
+	schedule = strings.TrimSpace(schedule)
+	if schedule == "" {
+		return "-"
+	}
+	if strings.HasPrefix(schedule, "calendar ") || strings.HasPrefix(schedule, "every ") || strings.Contains(schedule, "run-at-load") {
+		return humanSchedule(parseDisplaySchedule(schedule))
+	}
+	if strings.Contains(schedule, "=") {
+		return humanSchedule(parseDisplaySchedule("calendar " + schedule))
+	}
+	return schedule
+}
+
+func humanSchedule(s Schedule) string {
+	switch s.Type {
+	case "daemon":
+		return "daemon"
+	case "interval":
+		return "every " + humanDuration(s.EverySeconds)
+	case "calendar":
+		t := scheduleTime(s)
+		if s.Weekday != nil {
+			if t != "" {
+				return weekdayName(*s.Weekday) + " " + t
+			}
+			return "weekly " + weekdayName(*s.Weekday)
+		}
+		if s.Day != nil {
+			if t != "" {
+				return fmt.Sprintf("monthly day %d %s", *s.Day, t)
+			}
+			return fmt.Sprintf("monthly day %d", *s.Day)
+		}
+		if s.Hour != nil || s.Minute != nil {
+			return "daily " + t
+		}
+	case "cron":
+		if s.Cron != "" {
+			return s.Cron
+		}
+	}
+	return emptyDash(formatConfigSchedule(s))
+}
+
+func humanDuration(seconds int) string {
+	switch {
+	case seconds > 0 && seconds%3600 == 0:
+		return fmt.Sprintf("%dh", seconds/3600)
+	case seconds > 0 && seconds%60 == 0:
+		return fmt.Sprintf("%dm", seconds/60)
+	default:
+		return fmt.Sprintf("%ds", seconds)
+	}
+}
+
+func scheduleTime(s Schedule) string {
+	if s.Hour == nil && s.Minute == nil {
+		return ""
+	}
+	hour := 0
+	if s.Hour != nil {
+		hour = *s.Hour
+	}
+	minute := 0
+	if s.Minute != nil {
+		minute = *s.Minute
+	}
+	return fmt.Sprintf("%02d:%02d", hour, minute)
+}
+
+func weekdayName(day int) string {
+	names := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	if day >= 0 && day < len(names) {
+		return names[day]
+	}
+	return fmt.Sprintf("weekday %d", day)
+}
+
+func scheduleGroup(s Schedule) string {
+	switch s.Type {
+	case "daemon":
+		return "Daemon"
+	case "interval":
+		return "Interval"
+	case "calendar":
+		switch {
+		case s.Weekday != nil:
+			return "Weekly"
+		case s.Day != nil:
+			return "Monthly"
+		case s.Hour != nil || s.Minute != nil:
+			return "Daily"
+		}
+	}
+	return "Other"
+}
+
+func groupSortKey(s Schedule) string {
+	switch scheduleGroup(s) {
+	case "Daily":
+		return fmt.Sprintf("%04d", scheduleMinutes(s))
+	case "Weekly":
+		day := 9
+		if s.Weekday != nil {
+			day = *s.Weekday
+		}
+		return fmt.Sprintf("%d-%04d", day, scheduleMinutes(s))
+	case "Monthly":
+		day := 99
+		if s.Day != nil {
+			day = *s.Day
+		}
+		return fmt.Sprintf("%02d-%04d", day, scheduleMinutes(s))
+	case "Interval":
+		return fmt.Sprintf("%010d", s.EverySeconds)
+	default:
+		return humanSchedule(s)
+	}
+}
+
+func groupScheduleLabel(group string, s Schedule) string {
+	switch group {
+	case "Daemon":
+		return ""
+	case "Daily":
+		return scheduleTime(s)
+	case "Weekly":
+		if s.Weekday != nil {
+			if t := scheduleTime(s); t != "" {
+				return weekdayName(*s.Weekday) + " " + t
+			}
+			return weekdayName(*s.Weekday)
+		}
+	case "Monthly":
+		if s.Day != nil {
+			if t := scheduleTime(s); t != "" {
+				return fmt.Sprintf("day %d %s", *s.Day, t)
+			}
+			return fmt.Sprintf("day %d", *s.Day)
+		}
+	case "Interval":
+		if s.Type == "interval" {
+			return "every " + humanDuration(s.EverySeconds)
+		}
+	}
+	return humanSchedule(s)
+}
+
+func scheduleMinutes(s Schedule) int {
+	hour, minute := 0, 0
+	if s.Hour != nil {
+		hour = *s.Hour
+	}
+	if s.Minute != nil {
+		minute = *s.Minute
+	}
+	return hour*60 + minute
+}
+
+func discoveredStatus(item DiscoveredTask) string {
+	if !item.Valid {
+		return "invalid"
+	}
+	return emptyDash(item.Status)
+}
+
+func discoveredSourceOrder(bySource map[string][]DiscoveredTask) []string {
+	preferred := []string{"crontab", "launchd", "brew"}
+	var out []string
+	seen := map[string]bool{}
+	for _, source := range preferred {
+		if _, ok := bySource[source]; ok {
+			out = append(out, source)
+			seen[source] = true
+		}
+	}
+	var rest []string
+	for source := range bySource {
+		if !seen[source] {
+			rest = append(rest, source)
+		}
+	}
+	sort.Strings(rest)
+	return append(out, rest...)
+}
+
+func sourceTitle(source string) string {
+	switch source {
+	case "crontab":
+		return "Crontab"
+	case "launchd":
+		return "Launchd"
+	case "brew":
+		return "Brew services"
+	default:
+		return source
 	}
 }
 

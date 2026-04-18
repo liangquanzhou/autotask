@@ -69,3 +69,31 @@ func TestBuildUIStateHasTaskAliasAndActionableDiff(t *testing.T) {
 		t.Fatalf("diff = %#v", state["diff"])
 	}
 }
+
+func TestHumanSchedule(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Schedule
+		want string
+	}{
+		{name: "daemon", in: Schedule{Type: "daemon"}, want: "daemon"},
+		{name: "interval", in: Schedule{Type: "interval", EverySeconds: 1800}, want: "every 30m"},
+		{name: "daily", in: Schedule{Type: "calendar", Hour: intPtr(9), Minute: intPtr(30)}, want: "daily 09:30"},
+		{name: "weekly", in: Schedule{Type: "calendar", Weekday: intPtr(6), Hour: intPtr(3), Minute: intPtr(0)}, want: "Sat 03:00"},
+		{name: "monthly", in: Schedule{Type: "calendar", Day: intPtr(1), Hour: intPtr(19), Minute: intPtr(0)}, want: "monthly day 1 19:00"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := humanSchedule(tt.in); got != tt.want {
+				t.Fatalf("humanSchedule() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHumanDisplaySchedule(t *testing.T) {
+	got := humanDisplaySchedule("calendar weekday=0 hour=10 minute=0")
+	if got != "Sun 10:00" {
+		t.Fatalf("humanDisplaySchedule() = %q, want %q", got, "Sun 10:00")
+	}
+}
