@@ -2,6 +2,8 @@
 
 `autotask` is a lightweight CLI for keeping personal macOS automation tasks visible and auditable.
 
+[中文说明](README.zh-CN.md)
+
 ## Install
 
 ```sh

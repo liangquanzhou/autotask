@@ -1,0 +1,105 @@
+# autotask
+
+`autotask` 是一个面向 macOS 的个人自动任务管理 CLI。它的目标不是替代 launchd、crontab 或 Homebrew services，而是把你自己配置的任务集中登记、检查和同步，避免任务散落在不同地方之后忘记来源、重复建设。
+
+## 安装
+
+```sh
+brew tap liangquanzhou/tap
+brew install autotask
+```
+
+已经安装过时可以升级：
+
+```sh
+brew update
+brew upgrade liangquanzhou/tap/autotask
+```
+
+## 核心模型
+
+`autotask` 把 `~/.config/autotask/tasks.yaml` 当作你的个人任务登记表。
+
+- `autotask list` 只显示登记表里的任务。
+- `autotask scan` 扫描系统现状，包括 crontab、launchd 和 brew services。
+- `autotask doctor` 检查重复任务、无效 plist、登记表与系统状态不一致等问题。
+- `autotask diff` 对比登记表和 `~/Library/LaunchAgents` 里的实际 plist。
+- `autotask sync --apply` 按登记表生成并加载用户级 LaunchAgent。
+
+默认建议是：你自己的长期自动任务进入 `tasks.yaml`，再由 `autotask sync --apply` 生成 launchd plist。系统、第三方软件、Homebrew services 仍由它们自己的工具管理，`autotask` 只做扫描和提醒。
+
+## 常用命令
+
+```sh
+autotask scan --personal
+autotask doctor --personal
+autotask list
+autotask status
+autotask diff
+autotask sync --apply
+autotask import --apply --refresh
+autotask run <name>
+autotask logs <name>
+autotask enable <name>
+autotask disable <name>
+autotask fix-cron-dupes --apply
+autotask ui-state --json
+```
+
+## list、scan、doctor 的区别
+
+`autotask list` 不是“列出系统全部后台任务”，而是列出 `~/.config/autotask/tasks.yaml` 中登记的任务。它更像一个个人资产台账。
+
+`autotask scan` 才是扫描当前机器上真实存在的任务来源：
+
+- 当前用户的 `crontab`
+- `~/Library/LaunchAgents`
+- `/Library/LaunchAgents`
+- `/Library/LaunchDaemons`
+- `brew services list`
+
+`autotask scan --personal` 会尽量过滤出像是你自己配置的任务，例如 label 符合个人前缀，或者命令路径指向你的项目、配置目录。这个过滤是启发式的，所以它适合快速排查，不适合当作最终配置来源。
+
+`autotask doctor --personal` 会在扫描结果基础上检查问题，比如：
+
+- 同一个脚本同时存在于 crontab 和 launchd
+- plist XML 无效
+- 登记表里的任务没有对应的 launchd plist
+- 登记表里的命令文件不存在
+- 登记表和 launchd 里的内容不一致
+
+## brew services 怎么处理
+
+Homebrew services 不会自动进入 `autotask list`。
+
+这是刻意的：`brew services` 已经有自己的状态、启动和停止模型，适合继续用 Homebrew 管理。`autotask scan` 会读取它们，方便你看全局状态和发现重复，但默认不会把它们纳入 `tasks.yaml`。
+
+如果某个 Homebrew service 实际上是你自己写的长期任务，也可以手动登记到 `tasks.yaml`，但一般不建议这么做。更清晰的做法是：
+
+- 数据库、nginx、ollama 这类服务继续用 `brew services`。
+- 你自己的脚本、日报、同步、监控任务放进 `autotask`。
+
+## crontab 怎么处理
+
+crontab 也不会自动进入 `autotask list`，除非你把它转换成登记表里的任务。
+
+当前推荐路线是：个人长期任务优先迁到 launchd，由 `autotask` 管理。原因是 launchd 是 macOS 原生机制，能被 `launchctl` 查询和加载，也更适合后续做 SwiftUI 管理界面。
+
+`autotask fix-cron-dupes --apply` 可以删除那些已经在 `tasks.yaml` 中登记、并且也有 launchd 版本的重复 crontab 行。
+
+## 后续 UI
+
+后续 SwiftUI 不需要自己解析 plist 或 crontab。它应该只调用：
+
+```sh
+autotask ui-state --json
+```
+
+这个命令会返回适合 UI 使用的结构，包括：
+
+- `tasks`：登记任务和当前状态
+- `diff`：需要处理的差异
+- `issues`：doctor 检查出来的问题
+- `summary`：任务数、问题数、差异数
+
+这样 Go CLI 负责系统交互和同步逻辑，SwiftUI 只负责展示、确认和触发操作。
