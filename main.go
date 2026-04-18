@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const appVersion = "0.1.2"
+const appVersion = "0.1.3"
 
 type Config struct {
 	Tasks []Task `yaml:"tasks" json:"tasks"`
@@ -255,12 +255,8 @@ func runList(jsonOut bool) error {
 		fmt.Println("No tasks registered.")
 		return nil
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tLABEL\tSCHEDULE\tCOMMAND")
-	for _, t := range cfg.Tasks {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.Name, t.Label, formatConfigSchedule(t.Schedule), strings.Join(t.Command, " "))
-	}
-	return w.Flush()
+	printRegisteredTasks(cfg.Tasks)
+	return nil
 }
 
 func runStatus(args []string, jsonOut bool) error {
@@ -271,12 +267,34 @@ func runStatus(args []string, jsonOut bool) error {
 	if jsonOut {
 		return writeJSON(rows)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tENABLED\tLABEL\tSCHEDULE\tCOMMAND")
-	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%s\n", row.Name, emptyDash(row.Status), row.Enabled, row.Label, emptyDash(row.Schedule), truncate(row.Command, 90))
+	if len(rows) == 0 {
+		fmt.Println("No registered tasks found.")
+		return nil
 	}
-	return w.Flush()
+	printStatusRows(rows)
+	return nil
+}
+
+func printRegisteredTasks(tasks []Task) {
+	fmt.Printf("Registered tasks (%d)\n\n", len(tasks))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSCHEDULE\tLABEL")
+	for _, task := range tasks {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", task.Name, emptyDash(formatConfigSchedule(task.Schedule)), task.Label)
+		fmt.Fprintf(w, "  cmd: %s\n\n", compactPath(strings.Join(task.Command, " ")))
+	}
+	_ = w.Flush()
+}
+
+func printStatusRows(rows []StatusRow) {
+	fmt.Printf("Registered task status (%d)\n\n", len(rows))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSTATUS\tENABLED\tSCHEDULE\tLABEL")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.Name, emptyDash(row.Status), yesNo(row.Enabled), emptyDash(row.Schedule), row.Label)
+		fmt.Fprintf(w, "  cmd: %s\n\n", compactPath(row.Command))
+	}
+	_ = w.Flush()
 }
 
 func statusRows(name string) ([]StatusRow, error) {
@@ -1661,8 +1679,9 @@ func printTasks(items []DiscoveredTask) {
 		fmt.Println("No tasks found.")
 		return
 	}
+	fmt.Printf("Discovered tasks (%d)\n\n", len(items))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SOURCE\tSTATUS\tLABEL\tSCHEDULE\tCOMMAND")
+	fmt.Fprintln(w, "SOURCE\tSTATUS\tSCHEDULE\tLABEL")
 	for _, item := range items {
 		status := item.Status
 		if status == "" {
@@ -1671,7 +1690,14 @@ func printTasks(items []DiscoveredTask) {
 		if !item.Valid {
 			status = "invalid"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", item.Source, status, item.Label, emptyDash(item.Schedule), truncate(item.Command, 90))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", item.Source, status, emptyDash(item.Schedule), item.Label)
+		if item.Command != "" {
+			fmt.Fprintf(w, "  cmd: %s\n", compactPath(item.Command))
+		}
+		if item.Path != "" {
+			fmt.Fprintf(w, "  path: %s\n", compactPath(item.Path))
+		}
+		fmt.Fprintln(w)
 	}
 	_ = w.Flush()
 }
@@ -1940,11 +1966,19 @@ func emptyDash(s string) string {
 	return s
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
+func yesNo(v bool) string {
+	if v {
+		return "yes"
+	}
+	return "no"
+}
+
+func compactPath(s string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
 		return s
 	}
-	return s[:n-3] + "..."
+	return strings.ReplaceAll(s, home, "~")
 }
 
 func expandHome(s string) string {
