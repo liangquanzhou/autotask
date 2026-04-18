@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const appVersion = "0.1.0"
+const appVersion = "0.1.1"
 
 type Config struct {
 	Tasks []Task `yaml:"tasks" json:"tasks"`
