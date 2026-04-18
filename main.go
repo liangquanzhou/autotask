@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const appVersion = "0.1.1"
+const appVersion = "0.1.2"
 
 type Config struct {
 	Tasks []Task `yaml:"tasks" json:"tasks"`
@@ -330,17 +330,35 @@ func runUIState(jsonOut bool) error {
 	if err != nil {
 		return err
 	}
-	state := map[string]any{
-		"version": appVersion,
-		"config":  configPath(),
-		"status":  status,
-		"diff":    diff.Actions,
-		"issues":  diff.Issues,
-	}
+	state := buildUIState(status, diff)
 	if jsonOut {
 		return writeJSON(state)
 	}
 	return writeJSON(state)
+}
+
+func buildUIState(status []StatusRow, diff DiffResult) map[string]any {
+	changes := make([]DiffAction, 0, len(diff.Actions))
+	for _, action := range diff.Actions {
+		if action.Action != "noop" {
+			changes = append(changes, action)
+		}
+	}
+	return map[string]any{
+		"version": appVersion,
+		"config":  configPath(),
+		"tasks":   status,
+		"status":  status,
+		"diff":    changes,
+		"actions": diff.Actions,
+		"issues":  diff.Issues,
+		"summary": map[string]int{
+			"tasks":   len(status),
+			"diff":    len(changes),
+			"issues":  len(diff.Issues),
+			"actions": len(diff.Actions),
+		},
+	}
 }
 
 func runDiff(jsonOut bool) error {

@@ -50,3 +50,22 @@ func TestCrontabCommand(t *testing.T) {
 		t.Fatalf("command = %q, want %q", got, want)
 	}
 }
+
+func TestBuildUIStateHasTaskAliasAndActionableDiff(t *testing.T) {
+	state := buildUIState(
+		[]StatusRow{{Name: "demo", Label: "local.demo"}},
+		DiffResult{Actions: []DiffAction{
+			{Action: "noop"},
+			{Action: "write", Task: "demo", Label: "local.demo"},
+		}},
+	)
+
+	tasks, ok := state["tasks"].([]StatusRow)
+	if !ok || len(tasks) != 1 || tasks[0].Name != "demo" {
+		t.Fatalf("tasks = %#v", state["tasks"])
+	}
+	diff, ok := state["diff"].([]DiffAction)
+	if !ok || len(diff) != 1 || diff[0].Action != "write" {
+		t.Fatalf("diff = %#v", state["diff"])
+	}
+}
