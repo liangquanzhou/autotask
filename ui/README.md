@@ -27,6 +27,7 @@ make run
 - Reads state with `autotask ui-state --json`.
 - Reads details with `autotask show <name> --json`.
 - Reads logs with `autotask logs <name> -n 80`.
+- Shows recent run results recorded by `autotask exec`.
 - Does not edit tasks, run tasks, enable/disable tasks, or sync launchd.
 
 The app refreshes on open and on manual refresh. It does not poll in the background.

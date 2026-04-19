@@ -124,6 +124,7 @@ struct MenuTaskRow: View {
                         .font(.body)
                         .lineLimit(1)
                     Spacer()
+                    RunMarksView(records: task.runs?.recent ?? [])
                     Text(displaySchedule(task.schedule))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -189,6 +190,8 @@ struct SidebarView: View {
                             StatusDot(status: task.status, enabled: task.enabled)
                             Text(task.name)
                                 .lineLimit(1)
+                            Spacer()
+                            RunMarksView(records: task.runs?.recent ?? [])
                         }
                         Text(displaySchedule(task.schedule))
                             .font(.caption)
@@ -288,6 +291,18 @@ struct DetailView: View {
                 FieldLabel("Schedule")
                 Text(displaySchedule(selected.schedule))
             }
+            if let runs = selected.runs, let recent = runs.recent, !recent.isEmpty {
+                GridRow {
+                    FieldLabel("Recent")
+                    RunMarksView(records: recent)
+                }
+                if let last = runs.last {
+                    GridRow {
+                        FieldLabel("Last Run")
+                        Text("\(last.success ? "ok" : "failed") · exit \(last.exitCode) · \(durationText(last.durationMS))")
+                    }
+                }
+            }
             if let path = selected.path {
                 GridRow {
                     FieldLabel("Plist")
@@ -366,6 +381,27 @@ struct DetailView: View {
     }
 }
 
+struct RunMarksView: View {
+    var records: [RunRecord]
+
+    var body: some View {
+        if records.isEmpty {
+            Text("-")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            HStack(spacing: 4) {
+                ForEach(records.prefix(5)) { record in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(record.success ? Color.green : Color.red)
+                        .frame(width: 12, height: 6)
+                        .accessibilityLabel(record.success ? "ok" : "failed")
+                }
+            }
+        }
+    }
+}
+
 struct StatusDot: View {
     var status: String?
     var enabled: Bool?
@@ -434,4 +470,17 @@ func compactHome(_ value: String) -> String {
         return value
     }
     return value.replacingOccurrences(of: home, with: "~")
+}
+
+func durationText(_ ms: Int64?) -> String {
+    guard let ms else {
+        return "-"
+    }
+    if ms >= 60_000 {
+        return String(format: "%.1fm", Double(ms) / 60_000.0)
+    }
+    if ms >= 1_000 {
+        return String(format: "%.1fs", Double(ms) / 1_000.0)
+    }
+    return "\(ms)ms"
 }

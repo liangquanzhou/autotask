@@ -26,6 +26,40 @@ struct TaskStatus: Decodable, Identifiable, Hashable {
     var schedule: String?
     var command: String?
     var path: String?
+    var runs: RunInfo?
+}
+
+struct RunInfo: Decodable, Hashable {
+    var recent: [RunRecord]?
+    var last: RunRecord?
+    var successStreak: Int?
+    var failureCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case recent
+        case last
+        case successStreak = "success_streak"
+        case failureCount = "failure_count"
+    }
+}
+
+struct RunRecord: Decodable, Identifiable, Hashable {
+    var id: String { "\(startedAt)-\(exitCode)" }
+    var task: String?
+    var startedAt: String
+    var endedAt: String?
+    var exitCode: Int
+    var durationMS: Int64?
+    var success: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case task
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+        case exitCode = "exit_code"
+        case durationMS = "duration_ms"
+        case success
+    }
 }
 
 struct DiffAction: Decodable, Hashable {

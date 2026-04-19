@@ -16,11 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-const appVersion = "0.1.4"
+const appVersion = "0.1.5"
 
 type Config struct {
 	Tasks []Task `yaml:"tasks" json:"tasks"`
@@ -102,14 +103,31 @@ type DiffResult struct {
 }
 
 type StatusRow struct {
-	Name     string `json:"name"`
-	Label    string `json:"label"`
-	Kind     string `json:"kind"`
-	Enabled  bool   `json:"enabled"`
-	Status   string `json:"status"`
-	Schedule string `json:"schedule"`
-	Command  string `json:"command"`
-	Path     string `json:"path,omitempty"`
+	Name     string  `json:"name"`
+	Label    string  `json:"label"`
+	Kind     string  `json:"kind"`
+	Enabled  bool    `json:"enabled"`
+	Status   string  `json:"status"`
+	Schedule string  `json:"schedule"`
+	Command  string  `json:"command"`
+	Path     string  `json:"path,omitempty"`
+	Runs     RunInfo `json:"runs,omitempty"`
+}
+
+type RunRecord struct {
+	Task       string `json:"task"`
+	StartedAt  string `json:"started_at"`
+	EndedAt    string `json:"ended_at"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMS int64  `json:"duration_ms"`
+	Success    bool   `json:"success"`
+}
+
+type RunInfo struct {
+	Recent        []RunRecord `json:"recent,omitempty"`
+	Last          *RunRecord  `json:"last,omitempty"`
+	SuccessStreak int         `json:"success_streak"`
+	FailureCount  int         `json:"failure_count"`
 }
 
 func main() {
@@ -142,6 +160,10 @@ func main() {
 		err = runSync(os.Args[2:], jsonOut)
 	case "import":
 		err = runImport(os.Args[2:], jsonOut)
+	case "exec":
+		err = runExec(os.Args[2:])
+	case "runs":
+		err = runRuns(os.Args[2:], jsonOut)
 	case "run":
 		err = runRun(os.Args[2:])
 	case "logs":
@@ -165,8 +187,28 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "autotask:", err)
+		var status exitStatusError
+		if errors.As(err, &status) {
+			os.Exit(status.Code)
+		}
 		os.Exit(1)
 	}
+}
+
+type exitStatusError struct {
+	Code int
+	Err  error
+}
+
+func (e exitStatusError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("exit status %d", e.Code)
+}
+
+func (e exitStatusError) Unwrap() error {
+	return e.Err
 }
 
 func usage() {
@@ -189,6 +231,9 @@ Usage:
                             generate/load user LaunchAgents; dry-run by default
   autotask import [--apply] [--json]
                             import personal scan results into tasks.yaml; preview by default
+  autotask exec <name>      execute a task and record its exit status
+  autotask runs <name> [--json] [-n N]
+                            show recent recorded task runs
   autotask run <name>        run a registered task once
   autotask logs <name> [-n N]
                             print recent task log lines
@@ -330,9 +375,9 @@ func printRegisteredTasks(tasks []Task) {
 func printStatusRows(rows []StatusRow) {
 	fmt.Printf("Registered task status: %d\n\n", len(rows))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tENABLED\tWHEN\tLABEL")
+	fmt.Fprintln(w, "NAME\tSTATUS\tENABLED\tWHEN\tRECENT\tLABEL")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.Name, emptyDash(row.Status), yesNo(row.Enabled), humanDisplaySchedule(row.Schedule), row.Label)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", row.Name, emptyDash(row.Status), yesNo(row.Enabled), humanDisplaySchedule(row.Schedule), runMarks(row.Runs.Recent), row.Label)
 	}
 	_ = w.Flush()
 }
@@ -359,6 +404,7 @@ func statusRows(name string) ([]StatusRow, error) {
 			Name: task.Name, Label: task.Label, Kind: task.Kind, Enabled: taskEnabled(task),
 			Schedule: formatConfigSchedule(task.Schedule), Command: strings.Join(task.Command, " "),
 			Path: launchAgentPath(task.Label),
+			Runs: runInfo(task.Name, 5),
 		}
 		if item, ok := byLabel[task.Label]; ok {
 			row.Status = item.Status
@@ -575,9 +621,26 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	return executeTask(task, false)
+}
+
+func runExec(args []string) error {
+	name := firstArg(args)
+	if name == "" {
+		return errors.New("usage: autotask exec <name>")
+	}
+	task, err := taskByNameOrLabel(name)
+	if err != nil {
+		return err
+	}
+	return executeTask(task, true)
+}
+
+func executeTask(task Task, record bool) error {
 	if len(task.Command) == 0 {
 		return fmt.Errorf("task has no command: %s", task.Name)
 	}
+	start := time.Now()
 	cmd := exec.Command(expandHome(task.Command[0]), task.Command[1:]...)
 	if task.WorkingDirectory != "" {
 		cmd.Dir = expandHome(task.WorkingDirectory)
@@ -586,7 +649,50 @@ func runRun(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	err := cmd.Run()
+	if record {
+		exitCode := exitCode(err)
+		rec := RunRecord{
+			Task:       task.Name,
+			StartedAt:  start.Format(time.RFC3339),
+			EndedAt:    time.Now().Format(time.RFC3339),
+			ExitCode:   exitCode,
+			DurationMS: time.Since(start).Milliseconds(),
+			Success:    exitCode == 0,
+		}
+		if writeErr := appendRunRecord(task.Name, rec); writeErr != nil {
+			fmt.Fprintln(os.Stderr, "autotask: failed to record run:", writeErr)
+		}
+	}
+	if err != nil {
+		return exitStatusError{Code: exitCode(err), Err: err}
+	}
+	return err
+}
+
+func runRuns(args []string, jsonOut bool) error {
+	name := firstArg(args)
+	if name == "" {
+		return errors.New("usage: autotask runs <name> [--json] [-n N]")
+	}
+	n := 10
+	if raw := flagValue(args, "-n"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			return fmt.Errorf("invalid -n value: %s", raw)
+		}
+		n = parsed
+	}
+	task, err := taskByNameOrLabel(name)
+	if err != nil {
+		return err
+	}
+	info := runInfo(task.Name, n)
+	if jsonOut {
+		return writeJSON(info)
+	}
+	printRuns(task.Name, info)
+	return nil
 }
 
 func runLogs(args []string) error {
@@ -759,6 +865,157 @@ func installCrontabLines(lines []string) error {
 	return nil
 }
 
+func runRecordsDir() string {
+	return filepath.Join(configDir(), "runs")
+}
+
+func runRecordPath(taskName string) string {
+	return filepath.Join(runRecordsDir(), safeFileName(taskName)+".jsonl")
+}
+
+func appendRunRecord(taskName string, rec RunRecord) error {
+	if err := os.MkdirAll(runRecordsDir(), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(runRecordPath(taskName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return trimRunRecords(taskName, 100)
+}
+
+func trimRunRecords(taskName string, keep int) error {
+	records := readRunRecords(taskName, keep+20)
+	if len(records) <= keep {
+		return nil
+	}
+	records = records[:keep]
+	var b strings.Builder
+	for i := len(records) - 1; i >= 0; i-- {
+		data, err := json.Marshal(records[i])
+		if err != nil {
+			return err
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	return atomicWrite(runRecordPath(taskName), []byte(b.String()), 0o644)
+}
+
+func readRunRecords(taskName string, limit int) []RunRecord {
+	data, err := os.ReadFile(runRecordPath(taskName))
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var records []RunRecord
+	for i := len(lines) - 1; i >= 0 && len(records) < limit; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var rec RunRecord
+		if err := json.Unmarshal([]byte(line), &rec); err == nil {
+			records = append(records, rec)
+		}
+	}
+	return records
+}
+
+func runInfo(taskName string, limit int) RunInfo {
+	recent := readRunRecords(taskName, limit)
+	info := RunInfo{Recent: recent}
+	if len(recent) > 0 {
+		info.Last = &recent[0]
+	}
+	for _, rec := range recent {
+		if rec.Success {
+			if info.FailureCount == 0 {
+				info.SuccessStreak++
+			}
+			continue
+		}
+		info.FailureCount++
+	}
+	return info
+}
+
+func printRuns(name string, info RunInfo) {
+	if len(info.Recent) == 0 {
+		fmt.Println("No recorded runs for:", name)
+		return
+	}
+	fmt.Printf("Recent runs for %s\n\n", name)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "RESULT\tSTARTED\tDURATION\tEXIT")
+	for _, rec := range info.Recent {
+		result := "ok"
+		if !rec.Success {
+			result = "failed"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", result, rec.StartedAt, humanDurationMS(rec.DurationMS), rec.ExitCode)
+	}
+	_ = w.Flush()
+}
+
+func runMarks(records []RunRecord) string {
+	if len(records) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(records))
+	for _, rec := range records {
+		if rec.Success {
+			parts = append(parts, "ok")
+		} else {
+			parts = append(parts, "fail")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func resultWord(success bool) string {
+	if success {
+		return "ok"
+	}
+	return "failed"
+}
+
+func safeFileName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "task"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 127
+}
+
 func runSetLoaded(args []string, enabled bool) error {
 	name := firstArg(args)
 	if name == "" {
@@ -790,6 +1047,9 @@ func runSetLoaded(args []string, enabled bool) error {
 func runInit() error {
 	dir := configDir()
 	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "runs"), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "generated"), 0o755); err != nil {
@@ -1202,18 +1462,29 @@ func taskSemanticallyEqual(desired Task, currentItem DiscoveredTask) bool {
 	if err != nil {
 		return false
 	}
-	desiredComparable := comparableTask(desired)
-	currentComparable := comparableTask(current)
+	desiredComparable := comparableTask(desired, canonicalLaunchdCommand(desired.Name, launchdProgramArguments(desired)))
+	currentComparable := comparableTask(current, canonicalLaunchdCommand(desired.Name, current.Command))
 	a, _ := json.Marshal(desiredComparable)
 	b, _ := json.Marshal(currentComparable)
 	return bytes.Equal(a, b)
 }
 
-func comparableTask(t Task) map[string]any {
+func isWrappedCommandForTask(command []string, taskName string) bool {
+	return len(command) == 3 && filepath.Base(command[0]) == "autotask" && command[1] == "exec" && command[2] == taskName
+}
+
+func canonicalLaunchdCommand(taskName string, command []string) []string {
+	if isWrappedCommandForTask(command, taskName) {
+		return []string{"autotask", "exec", taskName}
+	}
+	return command
+}
+
+func comparableTask(t Task, command []string) map[string]any {
 	return map[string]any{
 		"label":             t.Label,
 		"schedule":          t.Schedule,
-		"command":           t.Command,
+		"command":           command,
 		"working_directory": expandHome(t.WorkingDirectory),
 		"env":               t.Env,
 		"run_at_load":       t.RunAtLoad,
@@ -1463,7 +1734,7 @@ func renderLaunchdPlist(task Task) (string, error) {
 	b.WriteString(`<plist version="1.0">` + "\n<dict>\n")
 	writePlistString(&b, "Label", task.Label)
 	b.WriteString("\t<key>ProgramArguments</key>\n\t<array>\n")
-	for _, arg := range task.Command {
+	for _, arg := range launchdProgramArguments(task) {
 		b.WriteString("\t\t<string>")
 		writeEscaped(&b, expandHome(arg))
 		b.WriteString("</string>\n")
@@ -1518,6 +1789,36 @@ func renderLaunchdPlist(task Task) (string, error) {
 	}
 	b.WriteString("</dict>\n</plist>\n")
 	return b.String(), nil
+}
+
+func launchdProgramArguments(task Task) []string {
+	if shouldWrapTaskExecution(task) {
+		return []string{autotaskExecutablePath(), "exec", task.Name}
+	}
+	return task.Command
+}
+
+func shouldWrapTaskExecution(task Task) bool {
+	if task.Schedule.Type == "daemon" || task.KeepAlive {
+		return false
+	}
+	return task.Kind == "" || task.Kind == "launchd"
+}
+
+func autotaskExecutablePath() string {
+	candidates := []string{"/opt/homebrew/bin/autotask", "/usr/local/bin/autotask"}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		candidates = append(candidates, filepath.Join(home, ".local", "bin", "autotask"))
+	}
+	if path, err := exec.LookPath("autotask"); err == nil && path != "" {
+		candidates = append([]string{path}, candidates...)
+	}
+	for _, path := range candidates {
+		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return path
+		}
+	}
+	return "/opt/homebrew/bin/autotask"
 }
 
 func writeSchedulePlist(b *strings.Builder, task Task) {
@@ -1767,6 +2068,12 @@ func printTaskDetail(task Task, row *StatusRow) {
 	if row != nil {
 		fmt.Fprintf(w, "  status\t%s\n", emptyDash(row.Status))
 		fmt.Fprintf(w, "  enabled\t%s\n", yesNo(row.Enabled))
+		if len(row.Runs.Recent) > 0 {
+			fmt.Fprintf(w, "  recent\t%s\n", runMarks(row.Runs.Recent))
+			if row.Runs.Last != nil {
+				fmt.Fprintf(w, "  last run\t%s exit=%d duration=%s\n", resultWord(row.Runs.Last.Success), row.Runs.Last.ExitCode, humanDurationMS(row.Runs.Last.DurationMS))
+			}
+		}
 		if row.Path != "" {
 			fmt.Fprintf(w, "  plist\t%s\n", compactPath(row.Path))
 		}
@@ -2041,6 +2348,19 @@ func humanDuration(seconds int) string {
 		return fmt.Sprintf("%dm", seconds/60)
 	default:
 		return fmt.Sprintf("%ds", seconds)
+	}
+}
+
+func humanDurationMS(ms int64) string {
+	switch {
+	case ms >= 3600000:
+		return fmt.Sprintf("%.1fh", float64(ms)/3600000)
+	case ms >= 60000:
+		return fmt.Sprintf("%.1fm", float64(ms)/60000)
+	case ms >= 1000:
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	default:
+		return fmt.Sprintf("%dms", ms)
 	}
 }
 

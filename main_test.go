@@ -23,6 +23,26 @@ func TestParseDisplayScheduleCalendar(t *testing.T) {
 
 func TestRenderLaunchdPlistEscapesShellOperators(t *testing.T) {
 	task := Task{
+		Name:     "demo",
+		Label:    "com.example.demo",
+		Kind:     "launchd",
+		Command:  []string{"/bin/zsh", "-lc", "echo a && echo b"},
+		Schedule: Schedule{Type: "daemon"},
+	}
+	got, err := renderLaunchdPlist(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, " && ") {
+		t.Fatalf("unescaped ampersand in plist:\n%s", got)
+	}
+	if !strings.Contains(got, "echo a &amp;&amp; echo b") {
+		t.Fatalf("missing escaped command:\n%s", got)
+	}
+}
+
+func TestRenderLaunchdPlistWrapsScheduledTasks(t *testing.T) {
+	task := Task{
 		Name:    "demo",
 		Label:   "com.example.demo",
 		Kind:    "launchd",
@@ -35,11 +55,11 @@ func TestRenderLaunchdPlistEscapesShellOperators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(got, " && ") {
-		t.Fatalf("unescaped ampersand in plist:\n%s", got)
+	if !strings.Contains(got, "<string>exec</string>") || !strings.Contains(got, "<string>demo</string>") {
+		t.Fatalf("missing autotask exec wrapper:\n%s", got)
 	}
-	if !strings.Contains(got, "echo a &amp;&amp; echo b") {
-		t.Fatalf("missing escaped command:\n%s", got)
+	if strings.Contains(got, "echo a") {
+		t.Fatalf("wrapped plist should not contain original shell command:\n%s", got)
 	}
 }
 
