@@ -1,25 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Autotask menu icon">
-  <path d="M32 8
-           A24 24 0 1 0 32 56
-           A24 24 0 1 0 32 8"
+  <path d="M32 10
+           A22 22 0 1 0 32 54
+           A22 22 0 1 0 32 10"
         fill="none"
         stroke="#000000"
-        stroke-width="6"
+        stroke-width="6.5"
         stroke-linecap="round"/>
 
-  <path d="M32 8 V15
-           M32 49 V56
-           M8 32 H15
-           M49 32 H56"
+  <path d="M32 10 V16
+           M32 48 V54
+           M10 32 H16
+           M48 32 H54"
         fill="none"
         stroke="#000000"
         stroke-width="5"
         stroke-linecap="round"/>
 
-  <path d="M22 32 L29 39 L43 24"
+  <path d="M22 31 L31 40 L54 17"
         fill="none"
         stroke="#000000"
-        stroke-width="8"
+        stroke-width="9"
         stroke-linecap="round"
         stroke-linejoin="round"/>
 </svg>
