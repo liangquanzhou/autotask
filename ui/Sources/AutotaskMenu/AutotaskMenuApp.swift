@@ -26,8 +26,11 @@ struct MenuBarIcon: View {
     var hasIssues: Bool
 
     var body: some View {
-        if let image = NSImage(named: "menubar-template") {
-            Image(nsImage: configured(image))
+        if let image = NSImage(named: "menubar-icon") {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
                 .overlay(alignment: .topTrailing) {
                     if hasIssues {
                         Circle()
@@ -39,11 +42,6 @@ struct MenuBarIcon: View {
         } else {
             Image(systemName: hasIssues ? "exclamationmark.triangle" : "clock.badge.checkmark")
         }
-    }
-
-    private func configured(_ image: NSImage) -> NSImage {
-        image.isTemplate = true
-        return image
     }
 }
 
