@@ -97,6 +97,24 @@ autotask doctor --personal
 
 The future Swift UI should call this CLI with `--json` and keep all launchd/plist logic in the Go binary.
 
+## Menubar UI
+
+A read-only SwiftUI menubar app lives in `ui/`.
+
+```sh
+cd ui
+make build
+make run
+```
+
+It reads from the CLI only:
+
+- `autotask ui-state --json`
+- `autotask show <name> --json`
+- `autotask logs <name> -n 80`
+
+It intentionally does not edit tasks, run tasks, enable/disable tasks, or sync launchd.
+
 ## Personal Matching
 
 `scan --personal` treats a LaunchAgent as personal when its label matches one of:

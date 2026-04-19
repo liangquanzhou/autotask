@@ -115,3 +115,21 @@ autotask ui-state --json
 - `summary`：任务数、问题数、差异数
 
 这样 Go CLI 负责系统交互和同步逻辑，SwiftUI 只负责展示、确认和触发操作。
+
+## 菜单栏 UI
+
+只读 SwiftUI 菜单栏应用放在 `ui/` 目录：
+
+```sh
+cd ui
+make build
+make run
+```
+
+第一版只读取状态，不执行写操作：
+
+- `autotask ui-state --json`
+- `autotask show <name> --json`
+- `autotask logs <name> -n 80`
+
+它不会编辑任务、运行任务、启停任务或执行 `sync --apply`。这些操作继续交给 CLI 或 agent。
