@@ -29,11 +29,10 @@ EOF
 iconutil -c icns "$ICONSET" -o "$LOGO_DIR/AutotaskMenu.icns"
 cp "$LOGO_DIR/AutotaskMenu.icns" "$UI_RESOURCES/AutotaskMenu.icns"
 
-magick "$LOGO_DIR/autotask-logo-clock-check.png" -alpha set -fuzz 18% -transparent white -resize 18x18 PNG32:"$UI_RESOURCES/menubar-icon.png"
-magick "$LOGO_DIR/autotask-logo-clock-check.png" -alpha set -fuzz 18% -transparent white -resize 36x36 PNG32:"$UI_RESOURCES/menubar-icon@2x.png"
-
 rsvg-convert -w 18 -h 18 "$LOGO_DIR/source/autotask-menubar-template.svg" -o "$UI_RESOURCES/menubar-template.png"
 rsvg-convert -w 36 -h 36 "$LOGO_DIR/source/autotask-menubar-template.svg" -o "$UI_RESOURCES/menubar-template@2x.png"
+cp "$UI_RESOURCES/menubar-template.png" "$UI_RESOURCES/menubar-icon.png"
+cp "$UI_RESOURCES/menubar-template@2x.png" "$UI_RESOURCES/menubar-icon@2x.png"
 
 echo "Wrote:"
 echo "  $LOGO_DIR/autotask-icon-1024.png"
