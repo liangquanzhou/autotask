@@ -27,7 +27,7 @@ struct MenuBarIcon: View {
 
     var body: some View {
         if let image = NSImage(named: "menubar-icon") {
-            Image(nsImage: image)
+            Image(nsImage: templateImage(image))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
@@ -42,6 +42,15 @@ struct MenuBarIcon: View {
         } else {
             Image(systemName: hasIssues ? "exclamationmark.triangle" : "clock.badge.checkmark")
         }
+    }
+
+    private func templateImage(_ image: NSImage) -> NSImage {
+        guard let copy = image.copy() as? NSImage else {
+            image.isTemplate = true
+            return image
+        }
+        copy.isTemplate = true
+        return copy
     }
 }
 
