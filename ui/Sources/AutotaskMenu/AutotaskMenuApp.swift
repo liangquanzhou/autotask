@@ -10,7 +10,7 @@ struct AutotaskMenuApp: App {
             MenuPanelView(store: store)
                 .frame(width: 380, height: 520)
         } label: {
-            Image(systemName: store.issueCount > 0 ? "exclamationmark.triangle" : "clock.badge.checkmark")
+            MenuBarIcon(hasIssues: store.issueCount > 0)
         }
         .menuBarExtraStyle(.window)
 
@@ -19,6 +19,31 @@ struct AutotaskMenuApp: App {
                 .frame(minWidth: 760, minHeight: 520)
         }
         .defaultSize(width: 900, height: 620)
+    }
+}
+
+struct MenuBarIcon: View {
+    var hasIssues: Bool
+
+    var body: some View {
+        if let image = NSImage(named: "menubar-template") {
+            Image(nsImage: configured(image))
+                .overlay(alignment: .topTrailing) {
+                    if hasIssues {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 6, height: 6)
+                            .offset(x: 3, y: -3)
+                    }
+                }
+        } else {
+            Image(systemName: hasIssues ? "exclamationmark.triangle" : "clock.badge.checkmark")
+        }
+    }
+
+    private func configured(_ image: NSImage) -> NSImage {
+        image.isTemplate = true
+        return image
     }
 }
 
