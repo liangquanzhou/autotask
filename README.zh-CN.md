@@ -16,6 +16,18 @@ brew update
 brew upgrade liangquanzhou/tap/autotask
 ```
 
+安装后 CLI 命令是：
+
+```sh
+autotask version
+```
+
+menubar 只读界面可以用这个命令启动：
+
+```sh
+autotask-menu
+```
+
 ## 核心模型
 
 `autotask` 把 `~/.config/autotask/tasks.yaml` 当作你的个人任务登记表。

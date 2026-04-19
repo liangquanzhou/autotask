@@ -20,6 +20,12 @@ Run it with:
 make run
 ```
 
+When installed through Homebrew, launch the menubar app with:
+
+```sh
+autotask-menu
+```
+
 ## Behavior
 
 - Calls `/opt/homebrew/bin/autotask` by default.
