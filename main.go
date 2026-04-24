@@ -448,6 +448,12 @@ func buildUIState(status []StatusRow, diff DiffResult) map[string]any {
 			changes = append(changes, action)
 		}
 	}
+	issues := append([]DoctorIssue{}, diff.Issues...)
+	for _, row := range status {
+		if issue, ok := runtimeFailureIssue(row); ok {
+			issues = append(issues, issue)
+		}
+	}
 	return map[string]any{
 		"version": appVersion,
 		"config":  configPath(),
@@ -455,13 +461,52 @@ func buildUIState(status []StatusRow, diff DiffResult) map[string]any {
 		"status":  status,
 		"diff":    changes,
 		"actions": diff.Actions,
-		"issues":  diff.Issues,
+		"issues":  issues,
 		"summary": map[string]int{
 			"tasks":   len(status),
 			"diff":    len(changes),
-			"issues":  len(diff.Issues),
+			"issues":  len(issues),
 			"actions": len(diff.Actions),
 		},
+	}
+}
+
+const runtimeFailureWindow = 7 * 24 * time.Hour
+
+func runtimeFailureIssue(row StatusRow) (DoctorIssue, bool) {
+	if !row.Enabled {
+		return DoctorIssue{}, false
+	}
+	last := row.Runs.Last
+	if last == nil || last.Success {
+		return DoctorIssue{}, false
+	}
+	t, err := time.Parse(time.RFC3339, last.EndedAt)
+	if err == nil && !t.IsZero() && time.Since(t) > runtimeFailureWindow {
+		return DoctorIssue{}, false
+	}
+	msg := fmt.Sprintf("%s: last run failed exit=%d", row.Name, last.ExitCode)
+	if err == nil && !t.IsZero() {
+		msg += fmt.Sprintf(" (%s ago)", humanTimeAgo(time.Since(t)))
+	}
+	return DoctorIssue{
+		Level:   "warn",
+		Code:    "runtime_failure",
+		Message: msg,
+		Ref:     row.Name,
+	}, true
+}
+
+func humanTimeAgo(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	case d >= time.Minute:
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	default:
+		return fmt.Sprintf("%ds", int(d/time.Second))
 	}
 }
 
